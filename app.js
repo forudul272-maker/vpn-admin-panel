@@ -1234,7 +1234,8 @@ $("serverForm").addEventListener("submit", async (e) => {
     const custom = safeId($("serverCustomId").value);
     const ref = id ? doc(db, "servers_v3", id) : (custom ? doc(db, "servers_v3", custom) : doc(serversCol));
     await withVersion(async (tx) => {
-      await encryptedAdd(tx, "servers_v3", ref, data);
+      if (id) await encryptedSet(tx, "servers_v3", id, data);
+      else await encryptedAdd(tx, "servers_v3", ref, data);
       await syncProfilesForServer(tx, ref.id, data.linkedProfileIds);
     });
     resetServerForm();
@@ -1288,7 +1289,10 @@ $("profileForm").addEventListener("submit", async (e) => {
     const id = $("profileDocId").value.trim();
     const custom = safeId($("profileCustomId").value);
     const ref = id ? doc(db, "profiles_v3", id) : (custom ? doc(db, "profiles_v3", custom) : doc(profilesCol));
-    await withVersion(async (tx) => await encryptedAdd(tx, "profiles_v3", ref, data));
+    await withVersion(async (tx) => {
+      if (id) await encryptedSet(tx, "profiles_v3", id, data);
+      else await encryptedAdd(tx, "profiles_v3", ref, data);
+    });
     resetProfileForm();
     toast("Profile saved. config_version increased.");
   } catch (err) {
