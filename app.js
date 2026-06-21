@@ -32,6 +32,99 @@ const configRef = doc(db, "app_config", "main");
 const serversCol = collection(db, "servers_v3");
 const profilesCol = collection(db, "profiles_v3");
 
+// --- Crypto Utilities ---
+const ENCRYPTION_KEY = "IftFirebaseConfigEnvelopeKey2026";
+
+async function getCryptoKey() {
+  const enc = new TextEncoder();
+  return await crypto.subtle.importKey(
+    "raw",
+    enc.encode(ENCRYPTION_KEY),
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+function bufferToBase64(buf) {
+  let binary = "";
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function encryptConfig(configObj) {
+  const plaintext = JSON.stringify(configObj);
+  const enc = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await getCryptoKey();
+  const cipherBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv },
+    key,
+    enc.encode(plaintext)
+  );
+  return `fc1:${bufferToBase64(iv)}:${bufferToBase64(cipherBuffer)}`;
+}
+
+async function decryptConfig(encryptedString) {
+  if (!encryptedString || !encryptedString.startsWith("fc1:")) return null;
+  const parts = encryptedString.split(":");
+  if (parts.length !== 3) return null;
+  try {
+    const iv = base64ToBuffer(parts[1]);
+    const ciphertext = base64ToBuffer(parts[2]);
+    const key = await getCryptoKey();
+    const plainBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: new Uint8Array(iv) },
+      key,
+      ciphertext
+    );
+    const dec = new TextDecoder();
+    return JSON.parse(dec.decode(plainBuffer));
+  } catch(e) {
+    console.error("Decryption failed:", e);
+    return null;
+  }
+}
+
+async function encryptedSet(tx, collectionName, id, dataPatch) {
+  let currentState = {};
+  if (collectionName === "servers_v3") {
+    currentState = state.servers.find(x => x.id === id) || {};
+  } else {
+    currentState = state.profiles.find(x => x.id === id) || {};
+  }
+  const merged = { ...currentState, ...dataPatch };
+  delete merged.id;
+  delete merged.updated_at;
+  delete merged.encryptedData;
+  const enc = await encryptConfig(merged);
+  const ref = doc(db, collectionName, id);
+  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() }, { merge: true });
+}
+
+async function encryptedAdd(tx, collectionName, ref, data) {
+  const merged = { ...data };
+  delete merged.id;
+  delete merged.updated_at;
+  delete merged.encryptedData;
+  const enc = await encryptConfig(merged);
+  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() }, { merge: true });
+}
+// ------------------------
+
+
 const state = {
   servers: [],
   profiles: [],
@@ -465,8 +558,22 @@ async function loadAll() {
     force_update: !!cfg.force_update,
     minimum_app_version: cfg.minimum_app_version || ""
   };
-  state.servers = srvSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  state.profiles = proSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  state.servers = await Promise.all(srvSnap.docs.map(async (d) => {
+    const raw = d.data();
+    if (raw.encryptedData) {
+      const dec = await decryptConfig(raw.encryptedData);
+      if (dec) { delete raw.encryptedData; Object.assign(raw, dec); }
+    }
+    return { id: d.id, ...raw };
+  }));
+  state.profiles = await Promise.all(proSnap.docs.map(async (d) => {
+    const raw = d.data();
+    if (raw.encryptedData) {
+      const dec = await decryptConfig(raw.encryptedData);
+      if (dec) { delete raw.encryptedData; Object.assign(raw, dec); }
+    }
+    return { id: d.id, ...raw };
+  }));
   renderAll();
 }
 
@@ -555,19 +662,19 @@ function serverProfileLinkPatch(profileIds) {
     profile_ids: linkedProfileIds
   };
 }
-function syncProfilesForServer(tx, serverId, selectedProfileIds) {
+async function syncProfilesForServer(tx, serverId, selectedProfileIds) {
   const selected = new Set(selectedProfileIds || []);
-  state.profiles.forEach((profile) => {
+  const promises = state.profiles.map(async (profile) => {
     const next = profileLinkedServerIds(profile).filter((id) => id !== serverId);
     if (selected.has(profile.id)) next.push(serverId);
     const linkedServerIds = Array.from(new Set(next));
-    tx.set(doc(db, "profiles_v3", profile.id), {
+    await encryptedSet(tx, "profiles_v3", profile.id, {
       linkedServerIds,
       linked_server_ids: linkedServerIds,
-      server_ids: linkedServerIds,
-      updated_at: serverTimestamp()
-    }, { merge: true });
+      server_ids: linkedServerIds
+    });
   });
+  await Promise.all(promises);
 }
 function renderLinkOptions() {
   const profileSelect = $("linkProfileSelect");
@@ -619,11 +726,8 @@ async function linkSelectedServer() {
   const linkedProfileIds = Array.from(new Set([...serverLinkedProfileIds(server), profile.id]));
 
   await withVersion(async (tx) => {
-    tx.set(doc(db, "servers_v3", server.id), {
-      ...serverProfileLinkPatch(linkedProfileIds),
-      updated_at: serverTimestamp()
-    }, { merge: true });
-    syncProfilesForServer(tx, server.id, linkedProfileIds);
+    await encryptedSet(tx, "servers_v3", server.id, serverProfileLinkPatch(linkedProfileIds));
+    await syncProfilesForServer(tx, server.id, linkedProfileIds);
   });
 }
 async function unlinkSelectedServer() {
@@ -1130,8 +1234,8 @@ $("serverForm").addEventListener("submit", async (e) => {
     const custom = safeId($("serverCustomId").value);
     const ref = id ? doc(db, "servers_v3", id) : (custom ? doc(db, "servers_v3", custom) : doc(serversCol));
     await withVersion(async (tx) => {
-      tx.set(ref, data, { merge: !!id });
-      syncProfilesForServer(tx, ref.id, data.linkedProfileIds);
+      await encryptedAdd(tx, "servers_v3", ref, data);
+      await syncProfilesForServer(tx, ref.id, data.linkedProfileIds);
     });
     resetServerForm();
     toast("Server saved. config_version increased.");
@@ -1156,19 +1260,19 @@ els.serverList.addEventListener("click", async (e) => {
       copy.updated_at = serverTimestamp();
       const copyRef = doc(serversCol);
       await withVersion(async (tx) => {
-        tx.set(copyRef, copy);
-        syncProfilesForServer(tx, copyRef.id, serverLinkedProfileIds(copy));
+        await encryptedAdd(tx, "servers_v3", copyRef, copy);
+        await syncProfilesForServer(tx, copyRef.id, serverLinkedProfileIds(copy));
       });
       return toast("Server duplicated.");
     }
     if (btn.dataset.act === "toggle") {
-      await withVersion(async (tx) => tx.update(doc(db, "servers_v3", id), { status: row.status === "active" ? "inactive" : "active", updated_at: serverTimestamp() }));
+      await withVersion(async (tx) => await encryptedSet(tx, "servers_v3", id, { status: row.status === "active" ? "inactive" : "active" }));
       return toast("Server status updated.");
     }
     if (btn.dataset.act === "del" && window.confirm(`Delete ${row.server_name || id}?`)) {
       await withVersion(async (tx) => {
         tx.delete(doc(db, "servers_v3", id));
-        syncProfilesForServer(tx, id, []);
+        await syncProfilesForServer(tx, id, []);
       });
       if ($("serverDocId").value === id) resetServerForm();
       toast("Server deleted.");
@@ -1184,7 +1288,7 @@ $("profileForm").addEventListener("submit", async (e) => {
     const id = $("profileDocId").value.trim();
     const custom = safeId($("profileCustomId").value);
     const ref = id ? doc(db, "profiles_v3", id) : (custom ? doc(db, "profiles_v3", custom) : doc(profilesCol));
-    await withVersion(async (tx) => tx.set(ref, data, { merge: !!id }));
+    await withVersion(async (tx) => await encryptedAdd(tx, "profiles_v3", ref, data));
     resetProfileForm();
     toast("Profile saved. config_version increased.");
   } catch (err) {
@@ -1209,20 +1313,18 @@ els.profileList.addEventListener("click", async (e) => {
       return;
     }
     if (btn.dataset.pact === "toggle") {
-      await withVersion(async (tx) => tx.update(doc(db, "profiles_v3", id), { status: row.status === "active" ? "inactive" : "active", updated_at: serverTimestamp() }));
+      await withVersion(async (tx) => await encryptedSet(tx, "profiles_v3", id, { status: row.status === "active" ? "inactive" : "active" }));
       return toast("Profile status updated.");
     }
     if (btn.dataset.pact === "del" && window.confirm(`Delete ${row.profile_name || id}?`)) {
       await withVersion(async (tx) => {
         tx.delete(doc(db, "profiles_v3", id));
-        state.servers.forEach((server) => {
+        const promises = state.servers.map(async (server) => {
           const linkedProfileIds = serverLinkedProfileIds(server);
           if (!linkedProfileIds.includes(id)) return;
-          tx.set(doc(db, "servers_v3", server.id), {
-            ...serverProfileLinkPatch(linkedProfileIds.filter((profileId) => profileId !== id)),
-            updated_at: serverTimestamp()
-          }, { merge: true });
+          await encryptedSet(tx, "servers_v3", server.id, serverProfileLinkPatch(linkedProfileIds.filter((profileId) => profileId !== id)));
         });
+        await Promise.all(promises);
       });
       if ($("profileDocId").value === id) resetProfileForm();
       toast("Profile deleted.");
