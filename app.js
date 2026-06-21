@@ -111,7 +111,7 @@ async function encryptedSet(tx, collectionName, id, dataPatch) {
   delete merged.encryptedData;
   const enc = await encryptConfig(merged);
   const ref = doc(db, collectionName, id);
-  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() }, { merge: true });
+  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() });
 }
 
 async function encryptedAdd(tx, collectionName, ref, data) {
@@ -120,7 +120,7 @@ async function encryptedAdd(tx, collectionName, ref, data) {
   delete merged.updated_at;
   delete merged.encryptedData;
   const enc = await encryptConfig(merged);
-  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() }, { merge: true });
+  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() });
 }
 // ------------------------
 
