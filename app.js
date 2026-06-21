@@ -111,7 +111,7 @@ async function encryptedSet(tx, collectionName, id, dataPatch) {
   delete merged.encryptedData;
   const enc = await encryptConfig(merged);
   const ref = doc(db, collectionName, id);
-  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() });
+  tx.set(ref, { encryptedData: enc, sort_order: n(merged.sort_order), updated_at: serverTimestamp() });
 }
 
 async function encryptedAdd(tx, collectionName, ref, data) {
@@ -120,7 +120,7 @@ async function encryptedAdd(tx, collectionName, ref, data) {
   delete merged.updated_at;
   delete merged.encryptedData;
   const enc = await encryptConfig(merged);
-  tx.set(ref, { encryptedData: enc, updated_at: serverTimestamp() });
+  tx.set(ref, { encryptedData: enc, sort_order: n(merged.sort_order), updated_at: serverTimestamp() });
 }
 // ------------------------
 
@@ -536,7 +536,12 @@ async function ensureConfig() {
 }
 
 async function bumpVersion(tx) {
-  tx.set(configRef, { config_version: increment(1), updated_at: serverTimestamp() }, { merge: true });
+  state.config.config_version = (state.config.config_version || 0) + 1;
+  const toSave = { ...state.config };
+  delete toSave.updated_at;
+  delete toSave.encryptedData;
+  const enc = await encryptConfig(toSave);
+  tx.set(configRef, { encryptedData: enc, config_version: state.config.config_version, updated_at: serverTimestamp() });
 }
 async function withVersion(writer) {
   await runTransaction(db, async (tx) => {
@@ -1340,13 +1345,11 @@ $("settingsForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   setBtn($("saveSettingsBtn"), true, "Saving...");
   try {
-    await withVersion(async (tx) => tx.set(configRef, {
-      app_notice: $("settingsNotice").value.trim(),
-      force_update: b($("settingsForceUpdate").value),
-      minimum_app_version: $("settingsMinVersion").value.trim(),
-      updated_at: serverTimestamp()
-    }, { merge: true }));
-    toast("Settings saved. config_version increased.");
+    state.config.app_notice = $("settingsNotice").value.trim();
+    state.config.force_update = b($("settingsForceUpdate").value);
+    state.config.minimum_app_version = $("settingsMinVersion").value.trim();
+    await withVersion(async (tx) => {});
+    toast("Settings saved.");
   } catch (err) {
     toast(err.message || "Save failed", true);
   } finally { setBtn($("saveSettingsBtn"), false); }
