@@ -29,8 +29,8 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const configRef = doc(db, "app_config", "main");
-const serversCol = collection(db, "servers");
-const profilesCol = collection(db, "profiles");
+const serversCol = collection(db, "servers_v3");
+const profilesCol = collection(db, "profiles_v3");
 
 const state = {
   servers: [],
@@ -561,7 +561,7 @@ function syncProfilesForServer(tx, serverId, selectedProfileIds) {
     const next = profileLinkedServerIds(profile).filter((id) => id !== serverId);
     if (selected.has(profile.id)) next.push(serverId);
     const linkedServerIds = Array.from(new Set(next));
-    tx.set(doc(db, "profiles", profile.id), {
+    tx.set(doc(db, "profiles_v3", profile.id), {
       linkedServerIds,
       linked_server_ids: linkedServerIds,
       server_ids: linkedServerIds,
@@ -619,7 +619,7 @@ async function linkSelectedServer() {
   const linkedProfileIds = Array.from(new Set([...serverLinkedProfileIds(server), profile.id]));
 
   await withVersion(async (tx) => {
-    tx.set(doc(db, "servers", server.id), {
+    tx.set(doc(db, "servers_v3", server.id), {
       ...serverProfileLinkPatch(linkedProfileIds),
       updated_at: serverTimestamp()
     }, { merge: true });
@@ -637,7 +637,7 @@ async function unlinkSelectedServer() {
   const linkedProfileIds = serverLinkedProfileIds(server).filter((id) => id !== profile.id);
 
   await withVersion(async (tx) => {
-    tx.set(doc(db, "servers", server.id), {
+    tx.set(doc(db, "servers_v3", server.id), {
       ...serverProfileLinkPatch(linkedProfileIds),
       updated_at: serverTimestamp()
     }, { merge: true });
@@ -1128,7 +1128,7 @@ $("serverForm").addEventListener("submit", async (e) => {
     const data = buildServerPayload();
     const id = $("serverDocId").value.trim();
     const custom = safeId($("serverCustomId").value);
-    const ref = id ? doc(db, "servers", id) : (custom ? doc(db, "servers", custom) : doc(serversCol));
+    const ref = id ? doc(db, "servers_v3", id) : (custom ? doc(db, "servers_v3", custom) : doc(serversCol));
     await withVersion(async (tx) => {
       tx.set(ref, data, { merge: !!id });
       syncProfilesForServer(tx, ref.id, data.linkedProfileIds);
@@ -1162,12 +1162,12 @@ els.serverList.addEventListener("click", async (e) => {
       return toast("Server duplicated.");
     }
     if (btn.dataset.act === "toggle") {
-      await withVersion(async (tx) => tx.update(doc(db, "servers", id), { status: row.status === "active" ? "inactive" : "active", updated_at: serverTimestamp() }));
+      await withVersion(async (tx) => tx.update(doc(db, "servers_v3", id), { status: row.status === "active" ? "inactive" : "active", updated_at: serverTimestamp() }));
       return toast("Server status updated.");
     }
     if (btn.dataset.act === "del" && window.confirm(`Delete ${row.server_name || id}?`)) {
       await withVersion(async (tx) => {
-        tx.delete(doc(db, "servers", id));
+        tx.delete(doc(db, "servers_v3", id));
         syncProfilesForServer(tx, id, []);
       });
       if ($("serverDocId").value === id) resetServerForm();
@@ -1183,7 +1183,7 @@ $("profileForm").addEventListener("submit", async (e) => {
     const data = profilePayload();
     const id = $("profileDocId").value.trim();
     const custom = safeId($("profileCustomId").value);
-    const ref = id ? doc(db, "profiles", id) : (custom ? doc(db, "profiles", custom) : doc(profilesCol));
+    const ref = id ? doc(db, "profiles_v3", id) : (custom ? doc(db, "profiles_v3", custom) : doc(profilesCol));
     await withVersion(async (tx) => tx.set(ref, data, { merge: !!id }));
     resetProfileForm();
     toast("Profile saved. config_version increased.");
@@ -1209,16 +1209,16 @@ els.profileList.addEventListener("click", async (e) => {
       return;
     }
     if (btn.dataset.pact === "toggle") {
-      await withVersion(async (tx) => tx.update(doc(db, "profiles", id), { status: row.status === "active" ? "inactive" : "active", updated_at: serverTimestamp() }));
+      await withVersion(async (tx) => tx.update(doc(db, "profiles_v3", id), { status: row.status === "active" ? "inactive" : "active", updated_at: serverTimestamp() }));
       return toast("Profile status updated.");
     }
     if (btn.dataset.pact === "del" && window.confirm(`Delete ${row.profile_name || id}?`)) {
       await withVersion(async (tx) => {
-        tx.delete(doc(db, "profiles", id));
+        tx.delete(doc(db, "profiles_v3", id));
         state.servers.forEach((server) => {
           const linkedProfileIds = serverLinkedProfileIds(server);
           if (!linkedProfileIds.includes(id)) return;
-          tx.set(doc(db, "servers", server.id), {
+          tx.set(doc(db, "servers_v3", server.id), {
             ...serverProfileLinkPatch(linkedProfileIds.filter((profileId) => profileId !== id)),
             updated_at: serverTimestamp()
           }, { merge: true });
