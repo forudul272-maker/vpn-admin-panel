@@ -256,12 +256,21 @@
 
       <section id="settings" class="screen">
         <form id="settingsForm" class="card form narrow">
-          <h4>App Config</h4>
-          <label>Notice<textarea id="settingsNotice" rows="3"></textarea></label>
-          <label>Force Update
-            <select id="settingsForceUpdate"><option value="false">Off</option><option value="true">On</option></select>
-          </label>
-          <label>Minimum App Version<input id="settingsMinVersion"></label>
+          <h4>Update & App Config</h4>
+          <fieldset style="border: 1px solid #4CAF50; padding: 15px; margin-bottom: 20px; border-radius: 8px;">
+            <legend style="color: #4CAF50; font-weight: bold; padding: 0 5px;">🛑 Force Update Old Versions</legend>
+            <label style="margin-bottom: 10px; display: block;">Required Minimum Version Code (App Version Code)
+              <input id="settingsMinVersion" type="number" placeholder="e.g. 15">
+              <small style="color: #bbb; display: block; margin-top: 5px; font-weight: normal; line-height: 1.4;">
+                <b>How it works:</b> Users with an App Version Code lower than this will be blocked. <br>
+                <i>Put <b>0</b> to allow all old versions. (Must be an integer, do not use 1.0.2 format)</i>
+              </small>
+            </label>
+            <label style="display: block;">Update Notice / Message
+              <textarea id="settingsNotice" rows="2" placeholder="e.g. Please update your app from Play Store!"></textarea>
+            </label>
+          </fieldset>
+          <input type="hidden" id="settingsForceUpdate" value="false">
           <label>Config Version (read only)<input id="settingsConfigVersion" readonly></label>
           <div class="row">
             <button id="saveSettingsBtn" class="btn primary" type="submit">Save Settings</button>
