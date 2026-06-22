@@ -108,19 +108,19 @@ async function encryptedSet(tx, collectionName, id, dataPatch) {
   const merged = { ...currentState, ...dataPatch };
   delete merged.id;
   delete merged.updated_at;
-  delete merged.encryptedData;
+  delete merged.encryptedLiti;
   const enc = await encryptConfig(merged);
   const ref = doc(db, collectionName, id);
-  tx.set(ref, { encryptedData: enc, sort_order: n(merged.sort_order), updated_at: serverTimestamp() });
+  tx.set(ref, { encryptedLiti: enc, sort_order: n(merged.sort_order), updated_at: serverTimestamp() });
 }
 
 async function encryptedAdd(tx, collectionName, ref, data) {
   const merged = { ...data };
   delete merged.id;
   delete merged.updated_at;
-  delete merged.encryptedData;
+  delete merged.encryptedLiti;
   const enc = await encryptConfig(merged);
-  tx.set(ref, { encryptedData: enc, sort_order: n(merged.sort_order), updated_at: serverTimestamp() });
+  tx.set(ref, { encryptedLiti: enc, sort_order: n(merged.sort_order), updated_at: serverTimestamp() });
 }
 // ------------------------
 
@@ -539,9 +539,11 @@ async function bumpVersion(tx) {
   state.config.config_version = (state.config.config_version || 0) + 1;
   const toSave = { ...state.config };
   delete toSave.updated_at;
-  delete toSave.encryptedData;
+  delete toSave.encryptedLiti;
+  toSave.updateMessage = toSave.app_notice;
+  toSave.minimumVersionCode = parseInt(toSave.minimum_app_version, 10) || 0;
   const enc = await encryptConfig(toSave);
-  tx.set(configRef, { encryptedData: enc, config_version: state.config.config_version, updated_at: serverTimestamp() });
+  tx.set(configRef, { encryptedLiti: enc, config_version: state.config.config_version, updated_at: serverTimestamp() });
 }
 async function withVersion(writer) {
   await runTransaction(db, async (tx) => {
@@ -565,17 +567,17 @@ async function loadAll() {
   };
   state.servers = await Promise.all(srvSnap.docs.map(async (d) => {
     const raw = d.data();
-    if (raw.encryptedData) {
-      const dec = await decryptConfig(raw.encryptedData);
-      if (dec) { delete raw.encryptedData; Object.assign(raw, dec); }
+    if (raw.encryptedLiti) {
+      const dec = await decryptConfig(raw.encryptedLiti);
+      if (dec) { delete raw.encryptedLiti; Object.assign(raw, dec); }
     }
     return { id: d.id, ...raw };
   }));
   state.profiles = await Promise.all(proSnap.docs.map(async (d) => {
     const raw = d.data();
-    if (raw.encryptedData) {
-      const dec = await decryptConfig(raw.encryptedData);
-      if (dec) { delete raw.encryptedData; Object.assign(raw, dec); }
+    if (raw.encryptedLiti) {
+      const dec = await decryptConfig(raw.encryptedLiti);
+      if (dec) { delete raw.encryptedLiti; Object.assign(raw, dec); }
     }
     return { id: d.id, ...raw };
   }));
